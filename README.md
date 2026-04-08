@@ -21,6 +21,6 @@ Find-AnsiStyle [-Name] <string>
 
 `ConvertTo-AnsiColorString` returns a ansi colored and styled string (PS 5.1 compatible)
 
-`Find-AnsiColor -Name` lists all matching names, exact match first, using `-Name *` lists all
+`Find-AnsiColor -Name` lists all matching names (see [ColorPalette](https://hexdocs.pm/color_palette/color_groups.html)), exact match first, using `-Name *` lists all
 
 `Find-AnsiStyle -Name` lists all matching names, exact match first, using `-Name *` lists all
