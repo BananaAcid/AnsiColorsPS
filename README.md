@@ -12,14 +12,14 @@ Install-Module AnsiColors
 ## Usage
 
 ```ps1
-ConvertTo-AnsiColorString [-InputString] <string> [-ForegroundColor <string>] [-BackgroundColor <string>]
+ConvertTo-AnsiColorString [-InputString] <string> [-ForegroundColor <string>] [-BackgroundColor <string>] [-Styles <string[]>]
 
 Find-AnsiColor [-Name] <string>
 
 Find-AnsiStyle [-Name] <string>
 ```
 
-`ConvertTo-AnsiColorString` returns a ansi colored string (PS 5.1 compatible)
+`ConvertTo-AnsiColorString` returns a ansi colored and styled string (PS 5.1 compatible)
 
 `Find-AnsiColor -Name` lists all matching names, exact match first
 
