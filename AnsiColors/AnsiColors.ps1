@@ -1,4 +1,11 @@
-
+<#
+.SYNOPSIS
+    Find an Ansi Color by name
+.DESCRIPTION
+    Returns a list of matching colors, first is the exact match
+.PARAMETER  Name
+    The name of the color. '*' is a wildcard
+#>
 Function Find-AnsiColor {
     param (
         [Parameter(Mandatory=$true, Position=0)]
@@ -12,6 +19,14 @@ Function Find-AnsiColor {
                     @{ Expression = { $_ } }
 }
 
+<#
+.SYNOPSIS
+    Find an Ansi Style by name
+.DESCRIPTION
+    Returns a list of matching styles, first is the exact match
+.PARAMETER  Name
+    The name of the style. '*' is a wildcard
+#>
 Function Find-AnsiStyle {
     param (
         [Parameter(Mandatory=$true, Position=0)]
@@ -24,45 +39,165 @@ Function Find-AnsiStyle {
         Sort-Object @{ Expression = { if ($_ -eq $Name) { 0 } else { 1 } } },  # put exact matches first
                     @{ Expression = { $_ } }
 }
+<#
+.Synopsis
+   Format a string with Ansi Color and Style in PowerShell
+.DESCRIPTION
+   Creates a string with Ansi Color and Style escape sequences, ready for output
+.NOTES
+   VSCode-Terminal won't do Foreground, if Background is set
+.PARAMETER  InputString
+   The string to format
+.PARAMETER  ForegroundColor
+   The foreground color to use. To get all color names, use `Find-AnsiColor -Name *`
+.PARAMETER  BackgroundColor
+   The background color to use. To get all color names, use `Find-AnsiColor -Name *`
+.PARAMETER  ForegroundRgbColor
+   The foreground color to use. Format "R;G;B", values 0-255
+.PARAMETER  BackgroundRgbColor
+   The background color to use. Format "R;G;B", values 0-255
+.PARAMETER  Styles
+   The styles to use. To get all styles, use `Find-AnsiStyle -Name *`
+.PARAMETER  NoEnd
+   Don't add the reset sequence at the end
+    (Allows for concatenation of strings without resetting colors/styles)
+.PARAMETER  End
+   Add the reset sequence at the end (for use with unstyled strings, or without a string)
+    (Allows for concatenation of strings without resetting colors/styles)
+.PARAMETER  EscMode joined|separate
+   Use a joined single or separate multiple escape sequences
 
+   Checks $Global:AnsiColorsFixColorEOL first
+.PARAMETER  FixColorEOL
+   Fix color at end of line ("clear rest of line") - This could break output, if overwriting a screenpos and if setting it to true
+   This is usually needed if using background color and a multiline string
+.PARAMETER  Fix
+   Switch for FixColorEOL
+.EXAMPLE
+   ConvertTo-AnsiColorString -InputString "Hello World" -ForegroundColor Green
+.EXAMPLE
+   ConvertTo-AnsiColorString -InputString "Hello World" -ForegroundColor Green -BackgroundColor Gray
+.EXAMPLE
+   ConvertTo-AnsiColorString -InputString "Hello World" -ForegroundColor Green -BackgroundColor Gray -Styles Bold
+.EXAMPLE
+    $str = ConvertTo-AnsiColorString -InputString "Hello World" -ForegroundColor Green -BackgroundColor Gray -Styles Bold -NoEnd
+    $str += " some more text with same styles"
+    $str += ConvertTo-AnsiColorString -InputString " - string is continued" -End
+    Write-Host $str
+#>
 Function ConvertTo-AnsiColorString {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName="Default")]
     Param (
-        [Parameter(Mandatory=$true, Position=0)]
+        [Parameter(Mandatory=$true, ValueFromPipeline=$true, ParameterSetName='Default', Position=0)]
+        [Parameter(Mandatory=$true, ValueFromPipeline=$true, ParameterSetName='EndWithReset', Position=0)]
+        [Parameter(Mandatory=$true, ValueFromPipeline=$true, ParameterSetName='RGB', Position=0)]
+        [AllowEmptyString()]
         [string]$InputString,
-        [Parameter(Mandatory=$false)]
+
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
+        [Alias('Foreground', 'Fore')]
         [string]$ForegroundColor,
-        [Parameter(Mandatory=$false)]
+        
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
+        [Alias('Background', 'Back')]
         [string]$BackgroundColor,
-        [Parameter(Mandatory=$false)]
-        [string[]]$Styles
+        
+        [Parameter(Mandatory=$false, ParameterSetName='RGB')]
+        [string]$ForegroundRgbColor,
+        
+        [Parameter(Mandatory=$false, ParameterSetName='RGB')]
+        [string]$BackgroundRgbColor,
+        
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
+        [Parameter(Mandatory=$false, ParameterSetName='RGB')]
+        [string[]]$Styles,
+        
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
+        [Parameter(Mandatory=$false, ParameterSetName='RGB')]
+        [Switch]$NoEnd,
 
+        [Parameter(Mandatory=$false, ParameterSetName='EndWithReset')]
+        [switch]$End,
+        
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
+        [Parameter(Mandatory=$false, ParameterSetName='RGB')]
+        [ValidateSet('joined','separate')]
+        [string]$EscMode = $( if ($null -ne $Global:AnsiColorsEscMode) { $Global:AnsiColorsEscMode } else { 'joined' } ),
+
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
+        [Parameter(Mandatory=$false, ParameterSetName='RGB')]
+        [Parameter(Mandatory=$false, ParameterSetName='EndWithReset')]
+        [bool]$FixColorEOL = $( if ($null -ne $Global:AnsiColorsFixColorEOL) { $Global:AnsiColorsFixColorEOL } else { $false } ),
+
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
+        [Parameter(Mandatory=$false, ParameterSetName='RGB')]
+        [Parameter(Mandatory=$false, ParameterSetName='EndWithReset')]
+        [switch]$Fix = $false
     )
-    
-    $esc = [char]27 # using char 27 instead of string "`e" because not using `e makeis it PS 5.1 compatible
 
-    $fgColor = $ansiColors[$ForegroundColor]
-    $bgColor = $ansiColors[$BackgroundColor]
+    begin {
 
-    $styleSequence = ""
+        # other esc sequences: https://gist.github.com/fnky/458719343aabd01cfb17a3a4f7296797
 
-    # multiple styles in array
-    if ($Styles) {
-        $styleSequence = $Styles | ForEach-Object { "$esc[{0}m" -f $ansiStyles[$_] }
+
+        $esc = [char]27 # using char 27 instead of string "`e" because not using `e makeis it PS 5.1 compatible
+        $reset = "$esc[0m"
+
+        if ($Fix -eq $true) {
+            $FixColorEOL = $true
+        }
+
+        $endReset = if ($End) { $reset } else { "" }
+        $output = ""
+        $seq = @()
+
+        if ($Styles) {
+            $seq += $Styles | ForEach-Object { $ansiStyles[$_] }
+        }
+        
+        if ($ForegroundColor) {
+            $seq += "38;5;{0}" -f $ansiColors[$ForegroundColor]
+        }
+        if ($ForegroundRgbColor) {
+            $seq += "38;2;{0}" -f $ForegroundRgbColor # must be {r};{g};{b}
+        }
+        
+        if ($BackgroundColor) {
+            $seq += "48;5;{0}" -f $ansiColors[$BackgroundColor]
+        }
+        if ($BackgroundRgbColor) {
+            $seq += "48;2;{0}" -f $BackgroundRgbColor # must be {r};{g};{b}
+        }
+        
+
+        Write-Debug "SEQ: `n$($seq -join "`n")"
+
+        if ($EscMode -eq "joined") {
+            $output = if ($seq) { "$esc[{0}m" -f ($seq -join ";") } else { "" }
+        }
+        else {
+            $output = if ($seq) { "$esc[{0}m" -f ($seq -join "m$esc[") } else { "" }
+        }
     }
 
-    if ($fgColor -and $bgColor) {
-        return "$styleSequence$esc[38;5;{0};48;5;{1}m{2}$esc[0m" -f $fgColor, $bgColor, $InputString
-    } elseif ($fgColor) {
-        return "$styleSequence$esc[38;5;{0}m{1}$esc[0m" -f $fgColor, $InputString
-    } elseif ($bgColor) {
-        return "$styleSequence$esc[48;5;{0}m{1}$esc[0m" -f $bgColor, $InputString
-    } elseif ($Styles) {
-        return "$styleSequence$InputString$esc[0m"
-    } else {
-        return $InputString
+    process {
+        $Output += $InputString
+    }
+
+    end {
+        if ($fgColor -or $bgColor -or $Styles) {
+            $output += "$esc[0{0}m" -f ( ";0" *($seq.Count -1) )
+            $output += if ($FixColorEOL) { "$esc[0J" } else { "" }
+        } else {
+            $output += $endReset
+            $output += if ($FixColorEOL) { "$esc[0J" } else { "" }
+        }
+
+        return $output
     }
 }
+
+
 
 $ansiStyles = @{
     Normal = 0;
@@ -74,6 +209,16 @@ $ansiStyles = @{
     RapidBlink = 6;
     Reverse = 7;
     Hidden = 8;
+
+    # Reset Styles
+    ResetBold = 21;
+    ResetDim = 22;     # Both dim and bold modes are reset with this sequence
+    ResetItalic = 23;
+    ResetUnderline = 24;
+    ResetBlink = 25;
+    ResetRapidBlink = 26;
+    ResetReverse = 27;
+    ResetHidden = 28;
 }
 
 $ansiColors = @{
